@@ -1,131 +1,158 @@
-import React, { useRef, useState, useEffect, useCallback, useContext, createContext } from "react"
+import React, { useRef, useState, useEffect, useCallback, createContext, useContext } from "react"
+import PropTypes from "prop-types"
 
 import ReconnectingWebSocket from "reconnecting-websocket"
-import { PingWS, filterPingPongMessages } from "@cs125/pingpongws"
+import { PingWS } from "@cs125/pingpongws"
 
 import { v4 as uuidv4 } from "uuid"
 import queryString from "query-string"
+import { throttle } from "throttle-debounce"
 
-import { ConnectionQuery, UpdateMessage, Component } from "../types"
+import { Component, ConnectionQuery, UpdateMessage, ComponentTree, LoginMessage } from "../types"
 
-interface IProps {
-  server: string
-  components: string[]
-  children: JSX.Element
+export interface ElementTrackerContext {
+  components: Component[] | undefined
 }
-
-interface ElementTrackerContext {
-  connected: boolean
-}
-
-const ElementTrackerContext = createContext<ElementTrackerContext>({
-  connected: false
+export const ElementTrackerContext = createContext<ElementTrackerContext>({
+  components: undefined,
 })
 
-const ElementTracker: React.FC<IProps> = ({ server, components, children }) => {
-  const [connected, setConnected] = useState(false)
-  const connection: React.MutableRefObject<ReconnectingWebSocket | undefined> = useRef(undefined)
-  const browserId = useRef(localStorage.getItem("browserId") || uuidv4())
-
-  const calculateActiveSection = useCallback(() => {
-    const componentsFlattened: Component[] = (Array.from(document.querySelectorAll(components.join(', '))))
-      .map((componentNode) => {
-        const { height } = document.body.getBoundingClientRect();
-        const { tagName, id } = componentNode;
-        const { top, bottom } = componentNode.getBoundingClientRect()
-        const visible = top >= -10 && bottom <= height + 10
-
-        return { tagName, id, visible, children: [] }
-      })
-
-    // Creates the tree
-    const structuredComponents: Component[] = []
-    let componentLogger: string[] = []
-
-    componentsFlattened.forEach(component => {
-      if (structuredComponents.length == 0) {
-        structuredComponents.push(component)
-      } else {
-        let level = componentLogger.indexOf(component.tagName)
-        if (level == -1) {
-          level = componentLogger.length
-        } else {
-          componentLogger = componentLogger.slice(0, level)
-        }
-        const getChildrenArray = (arr: Component[], depth: number): Component[] => {
-          if (depth == 0) return arr
-          else return getChildrenArray(arr[arr.length - 1].children, depth - 1)
-        }
-        getChildrenArray(structuredComponents, level).push(component)
-      }
-      componentLogger.push(component.tagName)
-    })
-
-    update({ data: structuredComponents })
-  }, [])
-
+export interface ElementTrackerProps {
+  tags: string[]
+  server?: string
+  googleToken?: string
+  updateDelay?: number
+  reportDelay?: number
+  children: React.ReactNode
+}
+const ElementTracker: React.FC<ElementTrackerProps> = ({
+  tags,
+  server,
+  googleToken,
+  updateDelay,
+  reportDelay,
+  children,
+}) => {
+  const connection = useRef<ReconnectingWebSocket | undefined>(undefined)
+  const browserId = useRef<string>(localStorage.getItem("element-tracker:id") || uuidv4())
+  const tabId = useRef<string>(sessionStorage.getItem("element-tracker:id") || uuidv4())
   useEffect(() => {
-    window.addEventListener("scroll", calculateActiveSection)
-
-    return (): void => {
-      window.removeEventListener("scroll", calculateActiveSection)
-    }
-  }, [calculateActiveSection])
-
-  const connect = useCallback(() => {
     connection.current?.close()
-
-    if (!server) return
-
-    const connectionQuery: ConnectionQuery = ConnectionQuery.check({
-      browserId: browserId.current
-      // googleToken: this.props.googleToken,
-    });
-
-    connection.current = PingWS(
-      new ReconnectingWebSocket(`${server}?${queryString.stringify(connectionQuery)}`)
-    )
-
-    connection.current.addEventListener("open", () => {
-      setConnected(true)
-    })
-
-    connection.current.addEventListener("close", () => {
-      setConnected(false)
-    })
-  }, [browserId, connection, setConnected])
-
-  const update = useCallback(({ data }: { data: Component[] }) => {
-    if (server) {
-      // TODO: Implement save id
-      const update: UpdateMessage = UpdateMessage.check({
-        type: "update",
-        browserId: browserId.current,
-        // updateId: message.saveId,
-        data
-      })
-      connection.current?.send(JSON.stringify(update))
+    connection.current = undefined
+    if (!server) {
       return
     }
-    if (!connection.current || !connected) {
-      throw new Error("server not connected")
-    }
-  }, [connection, connected])
-
-  // Connects to server on mount and reconnects each time the google user changes
-  useEffect(() => {
-    connect()
-    // add google dependency
-  }, [])
-
-  // Disconnects from the server when the component unmounts
-  useEffect(() => {
-    return () => {
+    const connectionQuery = ConnectionQuery.check({ browserId: browserId.current, tabId: tabId.current })
+    connection.current = PingWS(new ReconnectingWebSocket(`${server}?${queryString.stringify(connectionQuery)}`))
+    return (): void => {
       connection.current?.close()
+      connection.current = undefined
+    }
+  }, [server])
+
+  const [components, setComponents] = useState<Component[] | undefined>(undefined)
+  useEffect(() => {
+    if (!connection.current || !googleToken) {
+      return
+    }
+    const login = LoginMessage.check({
+      type: "login",
+      googleToken,
+    })
+    connection.current.send(JSON.stringify(login))
+  }, [connection.current, googleToken])
+
+  const report = useCallback(
+    throttle(reportDelay || 1000, (reportingComponents: Component[]) => {
+      if (!connection.current || !reportingComponents) {
+        return
+      }
+      const update = UpdateMessage.check({
+        type: "update",
+        browserId: browserId.current,
+        tabId: tabId.current,
+        location: window.location.href,
+        components: reportingComponents,
+      })
+      connection.current.send(JSON.stringify(update))
+    }),
+    [connection.current]
+  )
+
+  const updateVisibleComponents = useCallback(
+    throttle(updateDelay || 250, () => {
+      const newComponents = Array.from(document.querySelectorAll(tags.join(", "))).map((componentNode) => {
+        const { tagName, id } = componentNode
+        const { height } = document.body.getBoundingClientRect()
+        const text = componentNode.textContent
+        const { top, bottom } = componentNode.getBoundingClientRect()
+        const visible = top >= -10 && bottom <= height + 10
+        return {
+          tag: tagName.toLowerCase(),
+          ...(id && { id }),
+          ...(text && { text }),
+          visible,
+          top,
+          height,
+          bottom,
+        }
+      })
+      setComponents(newComponents)
+      report(newComponents)
+    }),
+    [tags]
+  )
+
+  useEffect(() => {
+    window.addEventListener("load", updateVisibleComponents)
+    window.addEventListener("scroll", updateVisibleComponents)
+    window.addEventListener("resize", updateVisibleComponents)
+    return (): void => {
+      window.removeEventListener("scroll", updateVisibleComponents)
+      window.removeEventListener("resize", updateVisibleComponents)
     }
   }, [])
 
-  return <ElementTrackerContext.Provider value={{ connected }} >{children}</ElementTrackerContext.Provider>
+  return <ElementTrackerContext.Provider value={{ components }}>{children}</ElementTrackerContext.Provider>
+}
+ElementTracker.propTypes = {
+  tags: PropTypes.arrayOf(PropTypes.string.isRequired).isRequired,
+  server: PropTypes.string,
+  googleToken: PropTypes.string,
+  updateDelay: PropTypes.number,
+  reportDelay: PropTypes.number,
+  children: PropTypes.node.isRequired,
 }
 
-export { ElementTracker, ElementTrackerContext }
+export { ElementTracker }
+
+export const useElementTracker = (): ElementTrackerContext => {
+  return useContext(ElementTrackerContext)
+}
+
+export const componentListToTree = (components: Component[]): ComponentTree[] => {
+  const componentTree: ComponentTree[] = []
+  let componentLogger: string[] = []
+  components.forEach((c) => {
+    const component = ComponentTree.check({ ...c, children: [] })
+    if (componentTree.length == 0) {
+      componentTree.push(component)
+    } else {
+      let level = componentLogger.indexOf(component.tag)
+      if (level == -1) {
+        level = componentLogger.length
+      } else {
+        componentLogger = componentLogger.slice(0, level)
+      }
+      const getChildrenArray = (tree: ComponentTree[], depth: number): ComponentTree[] => {
+        if (depth == 0) return tree
+        else return getChildrenArray(tree[tree.length - 1].children, depth - 1)
+      }
+      getChildrenArray(componentTree, level).push(component)
+    }
+    componentLogger.push(component.tag)
+  })
+  return componentTree
+}
+
+export { Component, ComponentTree } from "../types"

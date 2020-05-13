@@ -20,11 +20,11 @@ export default {
     commonJS({
       include: "node_modules/**",
       namedExports: {
-        runtypes: ["Record", "Partial", "Number", "String", "Array", "Static", "Union"],
+        runtypes: ["Record", "Partial", "Number", "String", "Array", "Static", "Union", "Lazy", "Boolean"],
       },
     }),
   ],
-  external: ["react", "prop-types", "react-ace", "crypto"],
+  external: ["react", "prop-types"],
   onwarn: (warning, next) => {
     if (warning.code === "CIRCULAR_DEPENDENCY") return
     if (warning.code === "EVAL") return
