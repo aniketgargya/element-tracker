@@ -60,7 +60,7 @@ const ElementTracker: React.FC<ElementTrackerProps> = ({
       googleToken,
     })
     connection.current.send(JSON.stringify(login))
-  }, [connection, googleToken])
+  }, [connection, googleToken, server])
 
   const report = useCallback(
     throttle(reportDelay || 1000, (reportingComponents: Component[]) => {
