@@ -60,7 +60,7 @@ const ElementTracker: React.FC<ElementTrackerProps> = ({
       googleToken,
     })
     connection.current.send(JSON.stringify(login))
-  }, [connection.current, googleToken])
+  }, [connection, googleToken])
 
   const report = useCallback(
     throttle(reportDelay || 1000, (reportingComponents: Component[]) => {
@@ -76,7 +76,7 @@ const ElementTracker: React.FC<ElementTrackerProps> = ({
       })
       connection.current.send(JSON.stringify(update))
     }),
-    [connection.current]
+    [connection]
   )
 
   const updateVisibleComponents = useCallback(
@@ -111,7 +111,7 @@ const ElementTracker: React.FC<ElementTrackerProps> = ({
       window.removeEventListener("scroll", updateVisibleComponents)
       window.removeEventListener("resize", updateVisibleComponents)
     }
-  }, [])
+  }, [updateVisibleComponents])
 
   return <ElementTrackerContext.Provider value={{ components }}>{children}</ElementTrackerContext.Provider>
 }
