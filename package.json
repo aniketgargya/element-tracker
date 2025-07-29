@@ -40,7 +40,7 @@
     "@cs125/pingpongws": "^2020.5.0",
     "@koa/cors": "^3.0.0",
     "google-auth-library": "^6.0.0",
-    "koa": "^2.11.0",
+    "koa": "^3.0.1",
     "koa-bodyparser": "^4.3.0",
     "koa-easy-ws": "https://github.com/cs125-illinois/koa-easy-ws.git",
     "koa-router": "^8.0.8",
